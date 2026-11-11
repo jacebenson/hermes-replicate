@@ -1,0 +1,53 @@
+name: replicate
+version: 1.1.0
+description: Replicate image, video, transcription and speech backends
+author: Jace Benson
+kind: backend
+requires_hermes: ">=0.23.1"
+config_schema:
+  api_token:
+    type: secret
+    env: REPLICATE_API_TOKEN
+    label: Replicate API token
+  image_model:
+    type: string
+    label: Image model identifier
+    default: black-forest-labs/flux-schnell
+    description: Any accessible owner/name or owner/name:64hex version. Presets are suggestions only. No fallback.
+  video_model:
+    type: string
+    label: Video model identifier
+    default: wan-video/wan-2.2-t2v-fast
+  stt_model:
+    type: string
+    label: Transcription model identifier
+    default: openai/whisper
+  tts_model:
+    type: string
+    label: Speech model identifier
+    default: minimax/speech-02-turbo
+  image_config:
+    type: string
+    label: Image model configuration JSON
+    default: "{}"
+    description: 'JSON object with optional version, input_mapping, output_mapping, extra_inputs. Input mappings map native names such as prompt to schema fields. Output mapping is a dot-separated key/index path. Extras must satisfy the live schema. No endpoint or credentials accepted.'
+  video_config:
+    type: string
+    label: Video model configuration JSON
+    default: "{}"
+    description: Same validated model configuration as image_config. Required nonstandard model fields must be supplied explicitly.
+  stt_config:
+    type: string
+    label: Transcription model configuration JSON
+    default: "{}"
+    description: 'Example: {"input_mapping":{"audio":"audio_file"},"output_mapping":"text","extra_inputs":{"task":"transcribe"}}. Fields must exist in the live schema.'
+  tts_config:
+    type: string
+    label: Speech model configuration JSON
+    default: "{}"
+    description: 'Map text, voice, speed, format, instructions to model fields as needed. Only supported downloadable mp3/wav/flac output is persisted. Not every model is automatically compatible.'
+requires_env:
+  - REPLICATE_API_TOKEN
+python_dependencies:
+  - "requests>=2.31,<3"
+  - "jsonschema>=4.18,<5"

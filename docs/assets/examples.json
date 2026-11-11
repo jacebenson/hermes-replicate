@@ -1,0 +1,50 @@
+[
+  {
+    "image": "example-01.jpg",
+    "model": "black-forest-labs/flux-schnell"
+  },
+  {
+    "image": "example-02.jpg",
+    "model": "black-forest-labs/flux-dev"
+  },
+  {
+    "image": "example-03.jpg",
+    "model": "black-forest-labs/flux-1.1-pro"
+  },
+  {
+    "image": "example-04.jpg",
+    "model": "black-forest-labs/flux-pro"
+  },
+  {
+    "image": "example-05.jpg",
+    "model": "black-forest-labs/flux-kontext-pro"
+  },
+  {
+    "image": "example-06.jpg",
+    "model": "ideogram-ai/ideogram-v3-turbo"
+  },
+  {
+    "image": "example-07.jpg",
+    "model": "recraft-ai/recraft-v3"
+  },
+  {
+    "image": "example-08.jpg",
+    "model": "stability-ai/sdxl"
+  },
+  {
+    "image": "example-09.jpg",
+    "model": "aisha-ai-official/animagine-xl-v4-opt"
+  },
+  {
+    "image": "example-10.jpg",
+    "model": "prunaai/z-image-turbo"
+  },
+  {
+    "image": "example-11.jpg",
+    "model": "qwen/qwen-image"
+  },
+  {
+    "image": "example-12.jpg",
+    "model": "black-forest-labs/flux-2-klein-4b"
+  }
+]
