@@ -118,18 +118,19 @@ class ProviderTests(unittest.TestCase):
                     self.assertEqual(result["image"], "/offline/image.png")
 
     def test_video_mapping(self):
-        result = self.video.generate("motion", resolution="480p", seed=12)
+        result = self.video.generate("motion", resolution="720p", seed=12)
         self.assertTrue(result["success"], result)
         payload = self.post.call_args.kwargs["json"]
         self.assertEqual(payload["version"], backend.CATALOG[backend.VIDEO_MODEL]["version"])
-        self.assertEqual(payload["input"], {"prompt": "motion", "aspect_ratio": "16:9", "resolution": "480p",
-                                          "num_frames": 81, "frames_per_second": 16, "seed": 12})
+        self.assertEqual(payload["input"], {"prompt": "motion", "aspect_ratio": "16:9", "resolution": "720p",
+                                          "duration": 5, "draft": True, "fps": 24,
+                                          "prompt_upsampling": False, "seed": 12})
         self.assertEqual(result["video"], "/offline/video.mp4")
-        self.assertEqual(result["duration"], 5.0625)
+        self.assertEqual(result["duration"], 5)
 
-    def test_video_duration_uses_configured_frames_and_fps(self):
+    def test_video_duration_uses_effective_configured_duration(self):
         config = {"video_gen": {"replicate": {"extra_inputs": {
-            "num_frames": 96, "frames_per_second": 24}}}}
+            "duration": 4, "draft": False, "fps": 48}}}}
         with patch("hermes_cli.config.load_config_readonly", return_value=config):
             result = self.video.generate("motion")
         self.assertTrue(result["success"], result)
@@ -157,8 +158,8 @@ class ProviderTests(unittest.TestCase):
         calls = [lambda: self.image.generate(" "), lambda: self.image.generate("a", model="unknown"),
                  lambda: self.image.generate("a", image_url="x"), lambda: self.image.generate("a", options={"steps": -1}),
                  lambda: self.video.generate(""), lambda: self.video.generate("a", model="unknown"),
-                 lambda: self.video.generate("a", duration=10), lambda: self.video.generate("a", audio=True),
-                 lambda: self.video.generate("a", aspect_ratio="1:1"), lambda: self.video.generate("a", resolution="1080p"),
+                 lambda: self.video.generate("a", duration=999), lambda: self.video.generate("a", audio=True),
+                 lambda: self.video.generate("a", aspect_ratio="invalid"), lambda: self.video.generate("a", resolution="invalid"),
                  lambda: self.video.generate("a", seed="bad"), lambda: self.stt.transcribe("/missing.wav"),
                  lambda: self.stt.transcribe(str(self.file), language="en-US"),
                  lambda: self.stt.transcribe(str(self.file), model="unknown"),

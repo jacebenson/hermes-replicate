@@ -33,7 +33,7 @@ CATALOG = json.loads((Path(__file__).parent / "docs/model-schemas.json").read_te
 IMAGE_MODELS = tuple(CATALOG)[:12]
 DEFAULT_MODEL = "black-forest-labs/flux-schnell"
 ANIMAGINE = "aisha-ai-official/animagine-xl-v4-opt"
-VIDEO_MODEL = "wan-video/wan-2.2-t2v-fast"
+VIDEO_MODEL = "prunaai/p-video"
 STT_MODEL = "openai/whisper"
 TTS_MODEL = "minimax/speech-02-turbo"
 _VERSION = CATALOG[ANIMAGINE]["version"]
@@ -119,6 +119,7 @@ def discover(model):
         if not 200 <= response.status_code < 300:
             raise ValueError()
         data = response.json()
+        is_official = not version and data.get("is_official") is True
         data = data if version else data.get("latest_version")
         if not isinstance(data, dict) or not re.fullmatch(r"[0-9a-f]{64}", data.get("id", "")):
             raise ValueError()
@@ -140,7 +141,7 @@ def discover(model):
                 for child in value:
                     check(child)
         check(schemas)
-        result = {"version": data["id"], "schemas": schemas}
+        result = {"version": data["id"], "schemas": schemas, "is_official": is_official}
     except requests.HTTPError as exc:
         status = exc.response.status_code if exc.response is not None else "unknown"
         raise ReplicateError(f"Model schema discovery HTTP {status}; check model access and identifier", "schema_error") from None
@@ -246,7 +247,11 @@ def prepare(modality, model, values):
         elif source not in {"width", "height", "aspect_ratio", "resolution", "format"}:
             invalid(f"Model does not support {source}; remove the option or configure input_mapping")
     # Existing preset-specific constants are convenience defaults, never schema substitutes.
-    if model.split(":")[0] == VIDEO_MODEL:
+    if modality == "video_gen" and model.split(":")[0] == VIDEO_MODEL:
+        for k, v in {"duration": 5, "draft": True, "fps": 24, "prompt_upsampling": False}.items():
+            if k in properties:
+                payload.setdefault(k, v)
+    if modality == "video_gen" and model.split(":")[0] == "wan-video/wan-2.2-t2v-fast":
         for k, v in {"num_frames": 81, "frames_per_second": 16}.items():
             if k in properties:
                 payload.setdefault(k, v)
@@ -318,7 +323,7 @@ def mapped_output(output, options, transcript=False):
         raise ReplicateError("Unsupported or ambiguous model output; configure output_mapping", "invalid_response") from None
 
 
-def predict(model, payload, metadata=None):
+def predict(model, payload, metadata=None, *, model_endpoint=False):
     """One creation, bounded polling; never echo server bodies, URLs or exceptions."""
     metadata = metadata or discover(model)
     validate_input(model, payload, metadata)
@@ -345,9 +350,16 @@ def predict(model, payload, metadata=None):
             raise ValueError()
         return data
 
+    # Official image/video models use their stable model API, not hidden versions.
+    name, pinned = model_identifier(model)
+    url = _API
+    body = {"version": metadata["version"], "input": payload}
+    if model_endpoint and not pinned and metadata.get("is_official") is True:
+        url = f"https://api.replicate.com/v1/models/{name}/predictions"
+        body = {"input": payload}
     try:
-        prediction = read(requests.post(_API, headers=headers, timeout=remaining(),
-            allow_redirects=False, json={"version": metadata["version"], "input": payload}))
+        prediction = read(requests.post(url, headers=headers, timeout=remaining(),
+            allow_redirects=False, json=body))
         prediction_id = prediction["id"]
         while prediction["status"] in {"starting", "processing"}:
             time.sleep(min(_POLL_INTERVAL, remaining()))
@@ -504,7 +516,7 @@ class ReplicateImageGenProvider(Metadata, ImageGenProvider):
             width, height = _SIZES[aspect]
             model, payload, metadata, options = prepare("image_gen", model,
                 {"prompt": clean, "aspect_ratio": _RATIOS[aspect], "width": width, "height": height})
-            path = persist(mapped_output(predict(model, payload, metadata), options),
+            path = persist(mapped_output(predict(model, payload, metadata, model_endpoint=True), options),
                            lambda url: save_url_image(url, prefix="replicate", timeout=30))
             return success_response(image=path, model=model, prompt=clean,
                 aspect_ratio=aspect, provider=self.name, modality="text")
@@ -520,7 +532,7 @@ class ReplicateVideoGenProvider(Metadata, VideoGenProvider):
 
     def capabilities(self):
         return {"modalities": ["text"], "aspect_ratios": ["16:9", "9:16"],
-            "resolutions": ["480p", "720p"], "min_duration": 5, "max_duration": 5,
+            "resolutions": ["720p"], "min_duration": 5, "max_duration": 5,
             "supports_audio": False, "supports_seed": True,
             "supports_negative_prompt": False, "supports_upscale": False, "max_reference_images": 0}
 
@@ -536,9 +548,11 @@ class ReplicateVideoGenProvider(Metadata, VideoGenProvider):
             model, payload, metadata, options = prepare("video_gen", model,
                 {"prompt": clean, "aspect_ratio": aspect_ratio, "resolution": resolution,
                  "duration": duration, "seed": seed})
-            path = persist(mapped_output(predict(model, payload, metadata), options),
+            path = persist(mapped_output(predict(model, payload, metadata, model_endpoint=True), options),
                            lambda url: save_url_video(url, prefix="replicate", timeout=60))
-            if duration is None and model.split(":")[0] == VIDEO_MODEL:
+            if model.split(":")[0] == VIDEO_MODEL:
+                duration = payload.get("duration")
+            elif duration is None and model.split(":")[0] == "wan-video/wan-2.2-t2v-fast":
                 properties = metadata["schemas"]["Input"].get("properties", {})
                 frames = payload.get("num_frames", properties.get("num_frames", {}).get("default"))
                 fps = payload.get("frames_per_second", properties.get("frames_per_second", {}).get("default"))
