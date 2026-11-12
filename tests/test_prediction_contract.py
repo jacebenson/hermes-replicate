@@ -66,6 +66,51 @@ class PredictionContractTests(original.ProviderTests):
         self.assertEqual(self.get.call_count, 1)
         self.assertEqual(self.post.call_count, 2)
 
+    def test_explicit_official_name_route_uses_generic_endpoint(self):
+        self.official = True
+        self.get.side_effect = self.metadata_get
+        for modality, provider, model in [('image_gen', self.image, backend.DEFAULT_MODEL),
+                                          ('video_gen', self.video, backend.VIDEO_MODEL)]:
+            with self.subTest(modality=modality):
+                self.post.reset_mock()
+                config = {modality: {'replicate': {'prediction_route': 'official_name'}}}
+                with patch('hermes_cli.config.load_config_readonly', return_value=config):
+                    result = provider.generate('contract', model=model)
+                self.assertTrue(result['success'], result)
+                self.post.assert_called_once()
+                self.assertEqual(self.post.call_args.args[0], backend._API)
+                self.assertEqual(set(self.post.call_args.kwargs['json']), {'version', 'input'})
+                self.assertEqual(self.post.call_args.kwargs['json']['version'], model)
+                self.assertEqual(self.post.call_args.kwargs['json']['input']['prompt'], 'contract')
+                self.assertFalse(self.post.call_args.kwargs['allow_redirects'])
+
+    def test_name_route_rejects_community_pins_and_unknown_routes_before_creation(self):
+        for official, model, route in [
+            (False, backend.DEFAULT_MODEL, 'official_name'),
+            (True, backend.DEFAULT_MODEL + ':' + backend.CATALOG[backend.DEFAULT_MODEL]['version'], 'official_name'),
+            (True, backend.DEFAULT_MODEL, 'https://example.com'),
+        ]:
+            with self.subTest(official=official, model=model, route=route):
+                backend._SCHEMA_CACHE.clear()
+                self.official = official
+                self.get.side_effect = self.metadata_get
+                config = {'image_gen': {'replicate': {'prediction_route': route}}}
+                with patch('hermes_cli.config.load_config_readonly', return_value=config):
+                    self.assert_failure(lambda: self.image.generate('contract', model=model), 'invalid_input')
+
+    def test_name_route_failure_never_falls_back(self):
+        self.official = True
+        self.get.side_effect = self.metadata_get
+        failed = original.response()
+        failed.status_code = 500
+        failed.raise_for_status.side_effect = requests.HTTPError(response=failed)
+        self.post.return_value = failed
+        config = {'video_gen': {'replicate': {'prediction_route': 'official_name'}}}
+        with patch('hermes_cli.config.load_config_readonly', return_value=config):
+            self.assert_failure(lambda: self.video.generate('contract'), 'api_error')
+        self.post.assert_called_once()
+        self.assertEqual(self.post.call_args.args[0], backend._API)
+
     def test_official_creation_failure_never_retries(self):
         self.official = True
         self.get.side_effect = self.metadata_get

@@ -17,6 +17,28 @@ refuse redirects, sanitize errors, and poll the fixed prediction endpoint by ID.
 There is no fallback POST or automatic creation retry: a failed response may have
 an unknown billing outcome.
 
+## Explicit official-name invocation
+
+The [HTTP predictions.create contract](https://replicate.com/docs/reference/http#predictions.create-request-body-version)
+also supports `POST /v1/predictions` with `version: "owner/name"` for official
+models. This is a documented alternative to the model endpoint, not a reason to
+switch all existing working calls. Image/video configuration accepts
+`prediction_route: official_name` to select it before creation. The default
+`auto` preserves the existing official model endpoint and community/pinned routing.
+
+For example, the native `video_gen.replicate` configuration can contain:
+
+```yaml
+prediction_route: official_name
+```
+
+The same field is accepted in plugin `video_config` or `image_config` JSON.
+Only unpinned models whose metadata reports `is_official: true` may select this
+route. Community models, explicit pins, other route values and speech modalities
+are rejected rather than silently discarding a pin or choosing another endpoint.
+Schema and input/output mapping validation still run. A failure never triggers
+a second creation or automatic fallback. No model names are hardcoded in routing.
+
 ## Evidence and limits
 
 The reported Flux Schnell and Wan 2.2 failures each had successful model metadata

@@ -188,12 +188,17 @@ def model_config(modality, model):
             options = json.loads(options)
         except ValueError:
             invalid(f"{prefix}_config must be a JSON object")
-    if not isinstance(options, dict) or set(options) - {"version", "input_mapping", "output_mapping", "extra_inputs"}:
-        invalid("Model config accepts only version, input_mapping, output_mapping, extra_inputs")
+    if not isinstance(options, dict) or set(options) - {"version", "input_mapping", "output_mapping", "extra_inputs", "prediction_route"}:
+        invalid("Model config accepts only version, input_mapping, output_mapping, extra_inputs, prediction_route")
     options = {**options, **{k: v for k, v in section.items() if k != "model"}}
-    if set(options) - {"version", "input_mapping", "output_mapping", "extra_inputs"}:
+    if set(options) - {"version", "input_mapping", "output_mapping", "extra_inputs", "prediction_route"}:
         invalid("Unknown Replicate model configuration field")
     name, version = model_identifier(model, options.get("version"))
+    route = options.get("prediction_route", "auto")
+    if route not in ("auto", "official_name"):
+        invalid("prediction_route must be auto or official_name")
+    if route == "official_name" and (version or modality not in ("image_gen", "video_gen")):
+        invalid("official_name requires an unpinned image or video model")
     return name + (":" + version if version else ""), options
 
 
@@ -209,6 +214,8 @@ _ALIASES = {"prompt": ("prompt",), "text": ("text", "input_text"),
 def prepare(modality, model, values):
     model, options = model_config(modality, model)
     metadata = discover(model)
+    if options.get("prediction_route") == "official_name" and metadata.get("is_official") is not True:
+        invalid("official_name requires an official model")
     properties = metadata["schemas"]["Input"].get("properties", {})
     mapping = options.get("input_mapping", {})
     extras = options.get("extra_inputs", {})
@@ -319,7 +326,7 @@ def mapped_output(output, options, transcript=False):
         raise ReplicateError("Unsupported or ambiguous model output; configure output_mapping", "invalid_response") from None
 
 
-def predict(model, payload, metadata=None, *, model_endpoint=False):
+def predict(model, payload, metadata=None, *, model_endpoint=False, prediction_route="auto"):
     """One creation, bounded polling; never echo server bodies, URLs or exceptions."""
     metadata = metadata or discover(model)
     validate_input(model, payload, metadata)
@@ -350,7 +357,13 @@ def predict(model, payload, metadata=None, *, model_endpoint=False):
     name, pinned = model_identifier(model)
     url = _API
     body = {"version": metadata["version"], "input": payload}
-    if model_endpoint and not pinned and metadata.get("is_official") is True:
+    if prediction_route not in ("auto", "official_name"):
+        invalid("prediction_route must be auto or official_name")
+    if prediction_route == "official_name":
+        if not model_endpoint or pinned or metadata.get("is_official") is not True:
+            invalid("official_name requires an unpinned official image or video model")
+        body = {"version": name, "input": payload}
+    elif model_endpoint and not pinned and metadata.get("is_official") is True:
         url = f"https://api.replicate.com/v1/models/{name}/predictions"
         body = {"input": payload}
     try:
@@ -512,7 +525,8 @@ class ReplicateImageGenProvider(Metadata, ImageGenProvider):
             width, height = _SIZES[aspect]
             model, payload, metadata, options = prepare("image_gen", model,
                 {"prompt": clean, "aspect_ratio": _RATIOS[aspect], "width": width, "height": height})
-            path = persist(mapped_output(predict(model, payload, metadata, model_endpoint=True), options),
+            path = persist(mapped_output(predict(model, payload, metadata, model_endpoint=True,
+                                               prediction_route=options.get("prediction_route", "auto")), options),
                            lambda url: save_url_image(url, prefix="replicate", timeout=30))
             return success_response(image=path, model=model, prompt=clean,
                 aspect_ratio=aspect, provider=self.name, modality="text")
@@ -544,7 +558,8 @@ class ReplicateVideoGenProvider(Metadata, VideoGenProvider):
             model, payload, metadata, options = prepare("video_gen", model,
                 {"prompt": clean, "aspect_ratio": aspect_ratio, "resolution": resolution,
                  "duration": duration, "seed": seed})
-            path = persist(mapped_output(predict(model, payload, metadata, model_endpoint=True), options),
+            path = persist(mapped_output(predict(model, payload, metadata, model_endpoint=True,
+                                               prediction_route=options.get("prediction_route", "auto")), options),
                            lambda url: save_url_video(url, prefix="replicate", timeout=60))
             if duration is None and model.split(":")[0] == VIDEO_MODEL:
                 properties = metadata["schemas"]["Input"].get("properties", {})
