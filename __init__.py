@@ -119,6 +119,7 @@ def discover(model):
         if not 200 <= response.status_code < 300:
             raise ValueError()
         data = response.json()
+        is_official = not version and data.get("is_official") is True
         data = data if version else data.get("latest_version")
         if not isinstance(data, dict) or not re.fullmatch(r"[0-9a-f]{64}", data.get("id", "")):
             raise ValueError()
@@ -140,7 +141,7 @@ def discover(model):
                 for child in value:
                     check(child)
         check(schemas)
-        result = {"version": data["id"], "schemas": schemas}
+        result = {"version": data["id"], "schemas": schemas, "is_official": is_official}
     except requests.HTTPError as exc:
         status = exc.response.status_code if exc.response is not None else "unknown"
         raise ReplicateError(f"Model schema discovery HTTP {status}; check model access and identifier", "schema_error") from None
@@ -318,7 +319,7 @@ def mapped_output(output, options, transcript=False):
         raise ReplicateError("Unsupported or ambiguous model output; configure output_mapping", "invalid_response") from None
 
 
-def predict(model, payload, metadata=None):
+def predict(model, payload, metadata=None, *, model_endpoint=False):
     """One creation, bounded polling; never echo server bodies, URLs or exceptions."""
     metadata = metadata or discover(model)
     validate_input(model, payload, metadata)
@@ -345,9 +346,16 @@ def predict(model, payload, metadata=None):
             raise ValueError()
         return data
 
+    # Official image/video models use their stable model API, not hidden versions.
+    name, pinned = model_identifier(model)
+    url = _API
+    body = {"version": metadata["version"], "input": payload}
+    if model_endpoint and not pinned and metadata.get("is_official") is True:
+        url = f"https://api.replicate.com/v1/models/{name}/predictions"
+        body = {"input": payload}
     try:
-        prediction = read(requests.post(_API, headers=headers, timeout=remaining(),
-            allow_redirects=False, json={"version": metadata["version"], "input": payload}))
+        prediction = read(requests.post(url, headers=headers, timeout=remaining(),
+            allow_redirects=False, json=body))
         prediction_id = prediction["id"]
         while prediction["status"] in {"starting", "processing"}:
             time.sleep(min(_POLL_INTERVAL, remaining()))
@@ -504,7 +512,7 @@ class ReplicateImageGenProvider(Metadata, ImageGenProvider):
             width, height = _SIZES[aspect]
             model, payload, metadata, options = prepare("image_gen", model,
                 {"prompt": clean, "aspect_ratio": _RATIOS[aspect], "width": width, "height": height})
-            path = persist(mapped_output(predict(model, payload, metadata), options),
+            path = persist(mapped_output(predict(model, payload, metadata, model_endpoint=True), options),
                            lambda url: save_url_image(url, prefix="replicate", timeout=30))
             return success_response(image=path, model=model, prompt=clean,
                 aspect_ratio=aspect, provider=self.name, modality="text")
@@ -536,7 +544,7 @@ class ReplicateVideoGenProvider(Metadata, VideoGenProvider):
             model, payload, metadata, options = prepare("video_gen", model,
                 {"prompt": clean, "aspect_ratio": aspect_ratio, "resolution": resolution,
                  "duration": duration, "seed": seed})
-            path = persist(mapped_output(predict(model, payload, metadata), options),
+            path = persist(mapped_output(predict(model, payload, metadata, model_endpoint=True), options),
                            lambda url: save_url_video(url, prefix="replicate", timeout=60))
             if duration is None and model.split(":")[0] == VIDEO_MODEL:
                 properties = metadata["schemas"]["Input"].get("properties", {})
