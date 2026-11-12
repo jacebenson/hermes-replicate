@@ -66,50 +66,72 @@ class PredictionContractTests(original.ProviderTests):
         self.assertEqual(self.get.call_count, 1)
         self.assertEqual(self.post.call_count, 2)
 
-    def test_explicit_official_name_route_uses_generic_endpoint(self):
-        self.official = True
-        self.get.side_effect = self.metadata_get
-        for modality, provider, model in [('image_gen', self.image, backend.DEFAULT_MODEL),
-                                          ('video_gen', self.video, backend.VIDEO_MODEL)]:
-            with self.subTest(modality=modality):
-                self.post.reset_mock()
-                config = {modality: {'replicate': {'prediction_route': 'official_name'}}}
-                with patch('hermes_cli.config.load_config_readonly', return_value=config):
-                    result = provider.generate('contract', model=model)
-                self.assertTrue(result['success'], result)
-                self.post.assert_called_once()
-                self.assertEqual(self.post.call_args.args[0], backend._API)
-                self.assertEqual(set(self.post.call_args.kwargs['json']), {'version', 'input'})
-                self.assertEqual(self.post.call_args.kwargs['json']['version'], model)
-                self.assertEqual(self.post.call_args.kwargs['json']['input']['prompt'], 'contract')
-                self.assertFalse(self.post.call_args.kwargs['allow_redirects'])
-
-    def test_name_route_rejects_community_pins_and_unknown_routes_before_creation(self):
-        for official, model, route in [
-            (False, backend.DEFAULT_MODEL, 'official_name'),
-            (True, backend.DEFAULT_MODEL + ':' + backend.CATALOG[backend.DEFAULT_MODEL]['version'], 'official_name'),
-            (True, backend.DEFAULT_MODEL, 'https://example.com'),
-        ]:
-            with self.subTest(official=official, model=model, route=route):
-                backend._SCHEMA_CACHE.clear()
-                self.official = official
-                self.get.side_effect = self.metadata_get
-                config = {'image_gen': {'replicate': {'prediction_route': route}}}
-                with patch('hermes_cli.config.load_config_readonly', return_value=config):
-                    self.assert_failure(lambda: self.image.generate('contract', model=model), 'invalid_input')
-
-    def test_name_route_failure_never_falls_back(self):
-        self.official = True
-        self.get.side_effect = self.metadata_get
-        failed = original.response()
-        failed.status_code = 500
-        failed.raise_for_status.side_effect = requests.HTTPError(response=failed)
-        self.post.return_value = failed
+    def test_removed_route_knob_rejected_before_creation(self):
         config = {'video_gen': {'replicate': {'prediction_route': 'official_name'}}}
         with patch('hermes_cli.config.load_config_readonly', return_value=config):
-            self.assert_failure(lambda: self.video.generate('contract'), 'api_error')
+            self.assert_failure(lambda: self.video.generate('contract'), 'invalid_input')
+        self.post.assert_not_called()
+
+    def test_default_native_video_handler_payload(self):
+        import json
+        import tools.video_generation_tool as tool
+        self.official = True
+        self.get.side_effect = self.metadata_get
+        with patch.object(tool, '_read_configured_video_provider', return_value='replicate'), patch.object(
+                tool, '_resolve_active_provider', return_value=self.video), patch.object(
+                tool, '_read_configured_video_model', return_value=None):
+            result = json.loads(tool._handle_video_generate({'prompt': 'contract'}))
+        self.assertTrue(result['success'], result)
+        self.assertEqual(result['model'], 'prunaai/p-video')
+        self.assertEqual(result['duration'], 5)
+        self.post.assert_called_once()
+        self.assertEqual(self.post.call_args.args[0],
+                         'https://api.replicate.com/v1/models/prunaai/p-video/predictions')
+        self.assertEqual(self.post.call_args.kwargs['json'], {'input': {
+            'prompt': 'contract', 'aspect_ratio': '16:9', 'resolution': '720p',
+            'duration': 5, 'draft': True, 'fps': 24, 'prompt_upsampling': False}})
+        self.assertFalse(self.post.call_args.kwargs['allow_redirects'])
+        self.assertEqual(self.video.capabilities()['resolutions'], ['720p'])
+
+    def test_pvideo_defaults_allow_explicit_configuration(self):
+        self.official = True
+        self.get.side_effect = self.metadata_get
+        config = {'video_gen': {'replicate': {'extra_inputs': {
+            'duration': 4, 'draft': False, 'fps': 48, 'prompt_upsampling': True}}}}
+        with patch('hermes_cli.config.load_config_readonly', return_value=config):
+            result = self.video.generate('contract', duration=5)
+        self.assertTrue(result['success'], result)
+        self.assertEqual(result['duration'], 4)
+        self.assertEqual(self.post.call_args.kwargs['json']['input'], {
+            'prompt': 'contract', 'aspect_ratio': '16:9', 'resolution': '720p',
+            'duration': 4, 'draft': False, 'fps': 48, 'prompt_upsampling': True})
+
+    def test_wan_explicit_selection_preserves_old_recipe(self):
+        result = self.video.generate('contract', model='wan-video/wan-2.2-t2v-fast', resolution='480p')
+        self.assertTrue(result['success'], result)
+        self.assertEqual(self.post.call_args.kwargs['json']['input'], {
+            'prompt': 'contract', 'aspect_ratio': '16:9', 'resolution': '480p',
+            'num_frames': 81, 'frames_per_second': 16})
+        self.assertEqual(result['duration'], 5.0625)
+
+    def test_manifest_matches_runtime_defaults(self):
+        from hermes_cli.plugins_settings import plugin_settings_fields
+        fields = plugin_settings_fields('replicate', original.ROOT)
+        video = next(f for f in fields if f['key'] == 'video_model')
+        self.assertEqual(video['default'], self.video.default_model())
+        self.assertIn('version: 1.1.1\n', (original.ROOT / 'plugin.yaml').read_text())
+        self.assertEqual(self.video.default_model(), 'prunaai/p-video')
+
+    def test_pvideo_explicit_pin_preserved(self):
+        self.official = True
+        self.get.side_effect = self.metadata_get
+        version = backend.CATALOG[backend.VIDEO_MODEL]['version']
+        result = self.video.generate('contract', model=backend.VIDEO_MODEL + ':' + version)
+        self.assertTrue(result['success'], result)
         self.post.assert_called_once()
         self.assertEqual(self.post.call_args.args[0], backend._API)
+        self.assertEqual(self.post.call_args.kwargs['json']['version'], version)
+        self.assertTrue(self.post.call_args.kwargs['json']['input']['draft'])
 
     def test_official_creation_failure_never_retries(self):
         self.official = True

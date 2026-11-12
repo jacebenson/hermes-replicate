@@ -17,34 +17,27 @@ refuse redirects, sanitize errors, and poll the fixed prediction endpoint by ID.
 There is no fallback POST or automatic creation retry: a failed response may have
 an unknown billing outcome.
 
-## Explicit official-name invocation
+## P-Video default
 
-The [HTTP predictions.create contract](https://replicate.com/docs/reference/http#predictions.create-request-body-version)
-also supports `POST /v1/predictions` with `version: "owner/name"` for official
-models. This is a documented alternative to the model endpoint, not a reason to
-switch all existing working calls. Image/video configuration accepts
-`prediction_route: official_name` to select it before creation. The default
-`auto` preserves the existing official model endpoint and community/pinned routing.
+The default video model is `prunaai/p-video`, using the official model endpoint.
+Its convenience recipe sends duration 5, resolution `720p`, `draft: true`, fps 24
+and `prompt_upsampling: false`. Explicit `extra_inputs` override these defaults.
+The snapshot records the schema from the prior authorized live run, not a runtime
+pin. Native advertised capabilities remain text-only, five seconds, 720p and
+landscape/portrait. Other model fields do not create native reference, audio,
+editing or upscaling support.
 
-For example, the native `video_gen.replicate` configuration can contain:
-
-```yaml
-prediction_route: official_name
-```
-
-The same field is accepted in plugin `video_config` or `image_config` JSON.
-Only unpinned models whose metadata reports `is_official: true` may select this
-route. Community models, explicit pins, other route values and speech modalities
-are rejected rather than silently discarding a pin or choosing another endpoint.
-Schema and input/output mapping validation still run. A failure never triggers
-a second creation or automatic fallback. No model names are hardcoded in routing.
+There is no configurable prediction-route switch. The experimental
+`prediction_route: official_name` option was removed rather than shipping an
+extra setting that the working P-Video path does not need.
 
 ## Evidence and limits
 
 The reported Flux Schnell and Wan 2.2 failures each had successful model metadata
 reads (`is_official: true`), followed by a generic version-based creation POST that
-returned HTTP 500 without a prediction ID. This establishes a request-contract
-mismatch, not proof that it was the provider's only cause of failure.
+returned HTTP 500 without a prediction ID. This identifies a client request-contract
+mismatch, not proof that it was the provider's only cause of failure. Subsequent
+Wan attempts also failed; the model is not claimed retired or permanently broken.
 
 `python3 -m unittest discover -s tests -p test_prediction_contract.py -v`
 exercises actual provider generation, schema discovery, validation, request building,
@@ -58,5 +51,9 @@ python3 -m unittest discover -s tests -v
 ```
 
 No paid prediction is needed to run these tests. They prove the corrected client
-contract, not hosted generation or artifact delivery. Live image/video acceptance
-requires separately authorized, bounded provider calls after review and deployment.
+contract, not hosted generation or artifact delivery. A prior authorized native
+P-Video handler run did generate and persist one video using this recipe and the
+official endpoint. It ran before the recipe became the code default, with explicit
+process-local configuration. The final shipping revision has offline regression
+coverage, not a new paid call. See [verification](verification.md) for the exact
+receipt, artifact measurements and remaining UI/install checks.

@@ -1,5 +1,5 @@
 name: replicate
-version: 1.1.0
+version: 1.1.1
 description: Replicate image, video, transcription and speech backends
 author: Jace Benson
 kind: backend
@@ -17,7 +17,7 @@ config_schema:
   video_model:
     type: string
     label: Video model identifier
-    default: wan-video/wan-2.2-t2v-fast
+    default: prunaai/p-video
   stt_model:
     type: string
     label: Transcription model identifier
